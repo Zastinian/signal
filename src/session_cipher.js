@@ -18,6 +18,7 @@ function assertBuffer(value) {
     }
     return value;
 }
+const whisperMsgKeys = "WhisperMessageKeys";
 
 class SessionCipher {
 
@@ -37,7 +38,7 @@ class SessionCipher {
     }
 
     _decodeTupleByte(byte) {
-        return [byte >> 4, byte & 0xf];
+        return [byte >> 4, byte & 0xf]; // Extract the 4 bits for each number
     }
 
     toString() {
@@ -83,7 +84,7 @@ class SessionCipher {
             }
             this.fillMessageKeys(chain, chain.chainKey.counter + 1);
             const keys = crypto.deriveSecrets(chain.messageKeys[chain.chainKey.counter],
-                                              Buffer.alloc(32), Buffer.from("WhisperMessageKeys"));
+                                              Buffer.alloc(32), Buffer.from(whisperMsgKeys));
             delete chain.messageKeys[chain.chainKey.counter];
             const msg = protobufs.WhisperMessage.create();
             msg.ephemeralKey = session.currentRatchet.ephemeralKeyPair.pubKey;
@@ -153,7 +154,10 @@ class SessionCipher {
                 errs.push(e);
             }
         }
-        for (const e of errs) {}
+        console.error("Failed to decrypt message with any known session...");
+        for (const e of errs) {
+            console.error("Session error:" + e, e.stack);
+        }
         throw new errors.SessionError("No matching sessions found for message");
     }
 
@@ -226,7 +230,8 @@ class SessionCipher {
             throw new Error("Tried to decrypt on a sending chain");
         }
         this.fillMessageKeys(chain, message.counter);
-        if (!chain.messageKeys.hasOwnProperty(message.counter)) {
+        // do not access Object.prototype method 'hasOwnProperty' from target object
+        if (!Object.prototype.hasOwnProperty.call(chain.messageKeys, message.counter)) {
             // Most likely the message was already decrypted and we are trying to process
             // twice.  This can happen if the user restarts before the server gets an ACK.
             throw new errors.MessageCounterError('Key used already or never filled');
@@ -234,7 +239,7 @@ class SessionCipher {
         const messageKey = chain.messageKeys[message.counter];
         delete chain.messageKeys[message.counter];
         const keys = crypto.deriveSecrets(messageKey, Buffer.alloc(32),
-                                          Buffer.from("WhisperMessageKeys"));
+                                          Buffer.from(whisperMsgKeys));
         const ourIdentityKey = await this.storage.getOurIdentity();
         const macInput = Buffer.alloc(messageProto.byteLength + (33 * 2) + 1);
         macInput.set(session.indexInfo.remoteIdentityKey);
@@ -251,6 +256,7 @@ class SessionCipher {
 
     fillMessageKeys(chain, counter) {
         if (chain.chainKey.counter >= counter) {
+            // We already have the keys for this counter, no need to fill them again.
             return;
         }
         if (counter - chain.chainKey.counter > 500) {
@@ -259,12 +265,21 @@ class SessionCipher {
         if (chain.chainKey.key === undefined) {
             throw new errors.SessionError('Chain closed');
         }
-        const key = chain.chainKey.key;
-        chain.messageKeys[chain.chainKey.counter + 1] = crypto.calculateMAC(key, Buffer.from([1]));
-        chain.chainKey.key = crypto.calculateMAC(key, Buffer.from([2]));
-        chain.chainKey.counter += 1;
-        return this.fillMessageKeys(chain, counter);
+        /**
+         * TEST CODE
+         * WARN: THIS IS NOT TESTED YET AND MAY NOT WORK AS EXPECTED
+         * PLEASE DONT UPDATE LIBSIGNAL TILL THIS IS TESTED
+         */
+        while (chain.chainKey.counter < counter) {
+            const key = chain.chainKey.key;
+            const nextCounter = chain.chainKey.counter + 1;
+
+            chain.messageKeys[nextCounter] = crypto.calculateMAC(key, Buffer.from([1]));
+            chain.chainKey.key = crypto.calculateMAC(key, Buffer.from([2]));
+            chain.chainKey.counter = nextCounter;
+        }
     }
+
 
     maybeStepRatchet(session, remoteKey, previousCounter) {
         if (session.getChain(remoteKey)) {
