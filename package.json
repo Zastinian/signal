@@ -1,6 +1,6 @@
 {
   "name": "libsignal",
-  "version": "2.2.5",
+  "version": "2.2.6",
   "description": "Open Whisper Systems' libsignal for Node.js",
   "repository": "WhiskeySockets/libsignal-node",
   "keywords": [
@@ -16,11 +16,11 @@
     "clean": "node-gyp clean"
   },
   "dependencies": {
+    "node-addon-api": "^7.1.1",
     "protobufjs": "6.8.8"
   },
   "devDependencies": {
-    "eslint": "6.0.1",
-    "node-addon-api": "^7.1.1"
+    "eslint": "6.0.1"
   },
   "gypfile": true,
   "engines": {
