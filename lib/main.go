@@ -22,12 +22,12 @@ func copyBytesFromJS(value js.Value) ([]byte, error) {
 }
 
 func createKeyPair(this js.Value, args []js.Value) interface{} {
-	seed, err := copyBytesFromJS(args[0])
-	if err != nil || len(seed) != 32 {
+	privKeySeed, err := copyBytesFromJS(args[0])
+	if err != nil || len(privKeySeed) != 32 {
 		return js.Global().Get("Error").New("Invalid private key seed")
 	}
 
-	privateKey := ed25519.NewKeyFromSeed(seed)
+	privateKey := ed25519.NewKeyFromSeed(privKeySeed)
 	publicKey := privateKey.Public().(ed25519.PublicKey)
 
 	pubKeyBytes := make([]byte, 33)
@@ -35,12 +35,13 @@ func createKeyPair(this js.Value, args []js.Value) interface{} {
 	copy(pubKeyBytes[1:], publicKey)
 
 	response := js.Global().Get("Object").New()
+
 	pubKeyJS := js.Global().Get("Uint8Array").New(len(pubKeyBytes))
 	js.CopyBytesToJS(pubKeyJS, pubKeyBytes)
 	response.Set("pubKey", pubKeyJS)
 
-	privKeyJS := js.Global().Get("Uint8Array").New(len(privateKey))
-	js.CopyBytesToJS(privKeyJS, privateKey)
+	privKeyJS := js.Global().Get("Uint8Array").New(32)
+	js.CopyBytesToJS(privKeyJS, privKeySeed)
 	response.Set("privKey", privKeyJS)
 
 	return response
@@ -60,12 +61,13 @@ func generateKeyPair(this js.Value, args []js.Value) interface{} {
 	copy(pubKeyBytes[1:], publicKey)
 
 	response := js.Global().Get("Object").New()
+
 	pubKeyJS := js.Global().Get("Uint8Array").New(len(pubKeyBytes))
 	js.CopyBytesToJS(pubKeyJS, pubKeyBytes)
 	response.Set("pubKey", pubKeyJS)
 
-	privKeyJS := js.Global().Get("Uint8Array").New(len(privateKey))
-	js.CopyBytesToJS(privKeyJS, privateKey)
+	privKeyJS := js.Global().Get("Uint8Array").New(32)
+	js.CopyBytesToJS(privKeyJS, seed)
 	response.Set("privKey", privKeyJS)
 
 	return response
@@ -76,25 +78,33 @@ func calculateAgreement(this js.Value, args []js.Value) interface{} {
 	if err != nil {
 		return js.Global().Get("Error").New("Invalid public key")
 	}
+
 	privKeySeed, err := copyBytesFromJS(args[1])
 	if err != nil || len(privKeySeed) != 32 {
 		return js.Global().Get("Error").New("Invalid private key")
 	}
 
-	var theirPublicKey, scrubbedPubKey [32]byte
+	var scrubbedPubKey []byte
 	if len(pubKey) == 33 && pubKey[0] == 5 {
-		copy(scrubbedPubKey[:], pubKey[1:])
+		scrubbedPubKey = pubKey[1:]
 	} else if len(pubKey) == 32 {
-		copy(scrubbedPubKey[:], pubKey)
+		scrubbedPubKey = pubKey
 	} else {
 		return js.Global().Get("Error").New("Invalid public key format")
 	}
-	copy(theirPublicKey[:], scrubbedPubKey[:])
 
-	var myPrivateKey [32]byte
-	copy(myPrivateKey[:], privKeySeed)
+	if len(scrubbedPubKey) != 32 {
+		return js.Global().Get("Error").New("Invalid public key length")
+	}
 
-	sharedSecret, err := curve25519.X25519(myPrivateKey[:], theirPublicKey[:])
+	privateKey := ed25519.NewKeyFromSeed(privKeySeed)
+	var x25519Private [32]byte
+	copy(x25519Private[:], privateKey.Seed())
+
+	var x25519Public [32]byte
+	copy(x25519Public[:], scrubbedPubKey)
+
+	sharedSecret, err := curve25519.X25519(x25519Private[:], x25519Public[:])
 	if err != nil {
 		return js.Global().Get("Error").New("Failed to calculate agreement")
 	}
@@ -109,12 +119,14 @@ func calculateSignature(this js.Value, args []js.Value) interface{} {
 	if err != nil || len(privKeySeed) != 32 {
 		return js.Global().Get("Error").New("Invalid private key")
 	}
+
 	message, err := copyBytesFromJS(args[1])
 	if err != nil {
 		return js.Global().Get("Error").New("Invalid message")
 	}
 
 	privateKey := ed25519.NewKeyFromSeed(privKeySeed)
+
 	signature := ed25519.Sign(privateKey, message)
 
 	result := js.Global().Get("Uint8Array").New(len(signature))
@@ -123,7 +135,8 @@ func calculateSignature(this js.Value, args []js.Value) interface{} {
 }
 
 func verifySignature(this js.Value, args []js.Value) interface{} {
-	if args[3].Bool() {
+
+	if len(args) > 3 && args[3].Bool() {
 		return true
 	}
 
@@ -131,36 +144,45 @@ func verifySignature(this js.Value, args []js.Value) interface{} {
 	if err != nil {
 		return js.Global().Get("Error").New("Invalid public key")
 	}
+
 	msg, err := copyBytesFromJS(args[1])
 	if err != nil {
 		return js.Global().Get("Error").New("Invalid message")
 	}
+
 	sig, err := copyBytesFromJS(args[2])
 	if err != nil || len(sig) != 64 {
 		return js.Global().Get("Error").New("Invalid signature")
 	}
 
-	var scrubbedPubKey [32]byte
+	var scrubbedPubKey []byte
 	if len(pubKey) == 33 && pubKey[0] == 5 {
-		copy(scrubbedPubKey[:], pubKey[1:])
+		scrubbedPubKey = pubKey[1:]
 	} else if len(pubKey) == 32 {
-		copy(scrubbedPubKey[:], pubKey)
+		scrubbedPubKey = pubKey
 	} else {
 		return js.Global().Get("Error").New("Invalid public key format")
 	}
 
-	isValid := ed25519.Verify(ed25519.PublicKey(scrubbedPubKey[:]), msg, sig)
+	if len(scrubbedPubKey) != 32 {
+		return js.Global().Get("Error").New("Invalid public key length")
+	}
+
+	isValid := ed25519.Verify(ed25519.PublicKey(scrubbedPubKey), msg, sig)
 	return isValid
 }
 
 func main() {
-	c := make(chan struct{}, 0)
+	c := make(chan struct{})
+
 	js.Global().Set("goCrypto", js.Global().Get("Object").New())
 	goCrypto := js.Global().Get("goCrypto")
+
 	goCrypto.Set("createKeyPair", js.FuncOf(createKeyPair))
 	goCrypto.Set("generateKeyPair", js.FuncOf(generateKeyPair))
 	goCrypto.Set("calculateAgreement", js.FuncOf(calculateAgreement))
 	goCrypto.Set("calculateSignature", js.FuncOf(calculateSignature))
 	goCrypto.Set("verifySignature", js.FuncOf(verifySignature))
+
 	<-c
 }

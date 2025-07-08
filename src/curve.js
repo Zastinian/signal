@@ -1,5 +1,4 @@
 "use strict";
-
 const fs = require("fs");
 const path = require("path");
 require("../lib/wasm_exec");
@@ -16,60 +15,8 @@ function initWasmSync() {
     const go = new Go();
     const wasmPath = path.resolve(__dirname, "../lib/main.wasm");
     const wasmBytes = fs.readFileSync(wasmPath);
-
     const module = new WebAssembly.Module(wasmBytes);
     const instance = new WebAssembly.Instance(module, go.importObject);
-
-    go.run = function (instance) {
-      this._inst = instance;
-      this.mem = new DataView(this._inst.exports.mem.buffer);
-      this._values = [NaN, 0, null, true, false, globalThis, this];
-      this._goRefCounts = new Array(this._values.length).fill(Infinity);
-      this._ids = new Map([
-        [0, 1],
-        [null, 2],
-        [true, 3],
-        [false, 4],
-        [globalThis, 5],
-        [this, 6],
-      ]);
-      this._idPool = [];
-      this.exited = false;
-
-      let offset = 4096;
-      const strPtr = (str) => {
-        const ptr = offset;
-        const bytes = new TextEncoder().encode(str + "\0");
-        new Uint8Array(this.mem.buffer, offset, bytes.length).set(bytes);
-        offset += bytes.length;
-        if (offset % 8 !== 0) {
-          offset += 8 - (offset % 8);
-        }
-        return ptr;
-      };
-
-      const argc = this.argv.length;
-      const argvPtrs = [];
-      this.argv.forEach((arg) => {
-        argvPtrs.push(strPtr(arg));
-      });
-      argvPtrs.push(0);
-
-      const keys = Object.keys(this.env).sort();
-      keys.forEach((key) => {
-        argvPtrs.push(strPtr(`${key}=${this.env[key]}`));
-      });
-      argvPtrs.push(0);
-
-      const argv = offset;
-      argvPtrs.forEach((ptr) => {
-        this.mem.setUint32(offset, ptr, true);
-        this.mem.setUint32(offset + 4, 0, true);
-        offset += 8;
-      });
-
-      this._inst.exports.run(argc, argv);
-    };
 
     go.run(instance);
     goCryptoInstance = global.goCrypto;
@@ -93,12 +40,40 @@ function validatePrivKey(privKey) {
   }
 }
 
+function scrubPubKeyFormat(pubKey) {
+  if (!(pubKey instanceof Buffer)) {
+    throw new Error(`Invalid public key type: ${pubKey?.constructor?.name}`);
+  }
+
+  if (
+    pubKey === undefined ||
+    ((pubKey.byteLength != 33 || pubKey[0] != 5) && pubKey.byteLength != 32)
+  ) {
+    throw new Error("Invalid public key");
+  }
+
+  if (pubKey.byteLength == 33) {
+    return pubKey.subarray(1);
+  } else {
+    console.error(
+      "WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey",
+    );
+    return pubKey;
+  }
+}
+
 exports.createKeyPair = function (privKey) {
   if (!wasmInitialized) {
     throw new Error("WASM not initialized");
   }
+
   validatePrivKey(privKey);
+
   const keys = goCryptoInstance.createKeyPair(privKey);
+  if (keys instanceof Error) {
+    throw keys;
+  }
+
   return {
     pubKey: Buffer.from(keys.pubKey),
     privKey: Buffer.from(keys.privKey),
@@ -109,11 +84,15 @@ exports.generateKeyPair = function () {
   if (!wasmInitialized) {
     throw new Error("WASM not initialized");
   }
+
   const keys = goCryptoInstance.generateKeyPair();
-  const fullPrivKey = Buffer.from(keys.privKey);
+  if (keys instanceof Error) {
+    throw keys;
+  }
+
   return {
     pubKey: Buffer.from(keys.pubKey),
-    privKey: fullPrivKey.subarray(0, 32),
+    privKey: Buffer.from(keys.privKey),
   };
 };
 
@@ -121,8 +100,19 @@ exports.calculateAgreement = function (pubKey, privKey) {
   if (!wasmInitialized) {
     throw new Error("WASM not initialized");
   }
+
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
+
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
+    throw new Error("Invalid public key");
+  }
+
   const shared = goCryptoInstance.calculateAgreement(pubKey, privKey);
+  if (shared instanceof Error) {
+    throw shared;
+  }
+
   return Buffer.from(shared);
 };
 
@@ -130,11 +120,18 @@ exports.calculateSignature = function (privKey, message) {
   if (!wasmInitialized) {
     throw new Error("WASM not initialized");
   }
+
   validatePrivKey(privKey);
+
   if (!message) {
     throw new Error("Invalid message");
   }
+
   const signature = goCryptoInstance.calculateSignature(privKey, message);
+  if (signature instanceof Error) {
+    throw signature;
+  }
+
   return Buffer.from(signature);
 };
 
@@ -142,5 +139,29 @@ exports.verifySignature = function (pubKey, msg, sig, isInit = false) {
   if (!wasmInitialized) {
     throw new Error("WASM not initialized");
   }
-  return goCryptoInstance.verifySignature(pubKey, msg, sig, isInit);
+
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
+
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
+    throw new Error("Invalid public key");
+  }
+
+  if (!msg) {
+    throw new Error("Invalid message");
+  }
+
+  if (!sig || sig.byteLength != 64) {
+    throw new Error("Invalid signature");
+  }
+
+  if (isInit) {
+    return true;
+  }
+
+  const result = goCryptoInstance.verifySignature(pubKey, msg, sig, isInit);
+  if (result instanceof Error) {
+    throw result;
+  }
+
+  return result;
 };
