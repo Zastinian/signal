@@ -1,7 +1,6 @@
 "use strict";
 
-const { ed25519 } = require("@noble/curves/ed25519");
-const { x25519 } = require("@noble/curves/x25519");
+const { ed25519, x25519 } = require("@noble/curves/ed25519");
 const nodeCrypto = require("crypto");
 
 function validatePrivKey(privKey) {
