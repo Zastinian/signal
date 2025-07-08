@@ -1,7 +1,15 @@
 "use strict";
 
-const curve25519 = require("curve25519-js");
+const { ed25519: ed, x25519 } = require("@noble/curves/ed25519");
 const nodeCrypto = require("crypto");
+
+ed.etc.sha512Sync = (...messages) => {
+  const hash = nodeCrypto.createHash("sha512");
+  for (const msg of messages) {
+    hash.update(msg);
+  }
+  return hash.digest();
+};
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -10,7 +18,7 @@ function validatePrivKey(privKey) {
   if (!(privKey instanceof Buffer)) {
     throw new Error(`Invalid private key type: ${privKey?.constructor?.name}`);
   }
-  if (privKey.byteLength != 32) {
+  if (privKey.byteLength !== 32) {
     throw new Error(`Incorrect private key length: ${privKey?.byteLength}`);
   }
 }
@@ -19,44 +27,42 @@ function scrubPubKeyFormat(pubKey) {
   if (!(pubKey instanceof Buffer)) {
     throw new Error(`Invalid public key type: ${pubKey?.constructor?.name}`);
   }
-  if (
-    pubKey === undefined ||
-    ((pubKey.byteLength != 33 || pubKey[0] != 5) && pubKey.byteLength != 32)
-  ) {
-    throw new Error("Invalid public key");
-  }
-  if (pubKey.byteLength == 33) {
+  if (pubKey.byteLength === 33 && pubKey[0] === 5) {
     return pubKey.subarray(1);
-  } else {
-    console.error(
-      "WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey",
-    );
+  }
+  if (pubKey.byteLength === 32) {
     return pubKey;
   }
+  throw new Error("Invalid public key");
 }
 
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
-  const keys = curve25519.generateKeyPair(privKey);
+  const publicKeyBytes = ed.getPublicKey(privKey);
 
-  const pub = new Uint8Array(33);
-  pub.set(keys.public, 1);
+  const pub = Buffer.alloc(33);
+  pub.set(publicKeyBytes, 1);
   pub[0] = 5;
 
   return {
-    pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keys.private),
+    pubKey: pub,
+    privKey: Buffer.from(privKey),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
-  validatePrivKey(privKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
-    throw new Error("Invalid public key");
+  let scrubbedPubKey;
+  if (pubKey instanceof Buffer && pubKey.byteLength === 33 && pubKey[0] === 5) {
+    scrubbedPubKey = pubKey.subarray(1);
+  } else if (pubKey instanceof Buffer && pubKey.byteLength === 32) {
+    scrubbedPubKey = pubKey;
+  } else {
+    throw new Error("Invalid public key for X25519");
   }
-  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
-  return Buffer.from(shared);
+  validatePrivKey(privKey);
+
+  const sharedSecret = x25519.getSharedSecret(privKey, scrubbedPubKey);
+  return Buffer.from(sharedSecret);
 };
 
 exports.calculateSignature = function (privKey, message) {
@@ -64,25 +70,25 @@ exports.calculateSignature = function (privKey, message) {
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = curve25519.sign(privKey, message);
+  const signature = ed.sign(message, privKey);
   return Buffer.from(signature);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
+  if (isInit) {
+    return true;
+  }
+  const scrubbedPubKey = scrubPubKeyFormat(pubKey);
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength !== 32) {
     throw new Error("Invalid public key");
   }
   if (!msg) {
     throw new Error("Invalid message");
   }
-  if (!sig || sig.byteLength != 64) {
+  if (!sig || sig.byteLength !== 64) {
     throw new Error("Invalid signature");
   }
-  if (isInit) {
-    return true;
-  }
-  return curve25519.verify(scrubbedPubKey, msg, sig);
+  return ed.verify(sig, msg, scrubbedPubKey);
 };
 
 exports.generateKeyPair = function () {

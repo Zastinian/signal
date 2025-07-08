@@ -11,7 +11,7 @@
   "license": "GPL-3.0",
   "main": "index.js",
   "dependencies": {
-    "curve25519-js": "^0.0.4",
+    "@noble/curves": "^1.9.2",
     "protobufjs": "6.8.8"
   },
   "engines": {
