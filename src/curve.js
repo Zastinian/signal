@@ -3,14 +3,6 @@
 const { ed25519: ed, x25519 } = require("@noble/curves/ed25519");
 const nodeCrypto = require("crypto");
 
-ed.etc.sha512Sync = (...messages) => {
-  const hash = nodeCrypto.createHash("sha512");
-  for (const msg of messages) {
-    hash.update(msg);
-  }
-  return hash.digest();
-};
-
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
     throw new Error("Undefined private key");
