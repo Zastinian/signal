@@ -41,7 +41,7 @@ function validatePrivKey(privKey) {
 exports.createKeyPair = async function (privKey) {
   await loadWasm();
   validatePrivKey(privKey);
-  const keys = await global.goCrypto.createKeyPair(privKey);
+  const keys = global.goCrypto.createKeyPair(privKey);
   return {
     pubKey: Buffer.from(keys.pubKey),
     privKey: Buffer.from(keys.privKey),
@@ -50,9 +50,7 @@ exports.createKeyPair = async function (privKey) {
 
 exports.generateKeyPair = async function () {
   await loadWasm();
-  const keys = await global.goCrypto.generateKeyPair();
-  // In Go, the generated private key is 64 bytes (seed + public key).
-  // To match the original JS, we return only the first 32 bytes (the seed).
+  const keys = global.goCrypto.generateKeyPair();
   const fullPrivKey = Buffer.from(keys.privKey);
   return {
     pubKey: Buffer.from(keys.pubKey),
@@ -63,7 +61,7 @@ exports.generateKeyPair = async function () {
 exports.calculateAgreement = async function (pubKey, privKey) {
   await loadWasm();
   validatePrivKey(privKey);
-  const shared = await global.goCrypto.calculateAgreement(pubKey, privKey);
+  const shared = global.goCrypto.calculateAgreement(pubKey, privKey);
   return Buffer.from(shared);
 };
 
@@ -73,11 +71,11 @@ exports.calculateSignature = async function (privKey, message) {
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = await global.goCrypto.calculateSignature(privKey, message);
+  const signature = global.goCrypto.calculateSignature(privKey, message);
   return Buffer.from(signature);
 };
 
 exports.verifySignature = async function (pubKey, msg, sig, isInit = false) {
   await loadWasm();
-  return await global.goCrypto.verifySignature(pubKey, msg, sig, isInit);
+  return global.goCrypto.verifySignature(pubKey, msg, sig, isInit);
 };
