@@ -37,25 +37,26 @@ function scrubPubKeyFormat(pubKey) {
 
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
-  const keys = curve25519.keyPair(privKey);
-  // prepend version byte
-  var origPub = new Uint8Array(keys.pubKey);
-  var pub = new Uint8Array(33);
-  pub.set(origPub, 1);
+  const keys = curve25519.generateKeyPair(privKey);
+
+  const pub = new Uint8Array(33);
+  pub.set(keys.public, 1);
   pub[0] = 5;
+
   return {
     pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keys.privKey),
+    privKey: Buffer.from(keys.private),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
-  pubKey = scrubPubKeyFormat(pubKey);
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
-  if (!pubKey || pubKey.byteLength != 32) {
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
-  return Buffer.from(curve25519.sharedSecret(pubKey, privKey));
+  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
+  return Buffer.from(shared);
 };
 
 exports.calculateSignature = function (privKey, message) {
@@ -63,12 +64,13 @@ exports.calculateSignature = function (privKey, message) {
   if (!message) {
     throw new Error("Invalid message");
   }
-  return Buffer.from(curve25519.sign(privKey, message));
+  const signature = curve25519.sign(privKey, message);
+  return Buffer.from(signature);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
-  pubKey = scrubPubKeyFormat(pubKey);
-  if (!pubKey || pubKey.byteLength != 32) {
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
   if (!msg) {
@@ -77,7 +79,10 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
   if (!sig || sig.byteLength != 64) {
     throw new Error("Invalid signature");
   }
-  return isInit ? true : curve25519.verify(pubKey, msg, sig);
+  if (isInit) {
+    return true;
+  }
+  return curve25519.verify(scrubbedPubKey, msg, sig);
 };
 
 exports.generateKeyPair = function () {
