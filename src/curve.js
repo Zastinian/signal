@@ -4,27 +4,82 @@ const fs = require("fs");
 const path = require("path");
 require("../lib/wasm_exec");
 
-let wasmModulePromise = null;
+let wasmInitialized = false;
+let goCryptoInstance = null;
 
-function loadWasm() {
-  if (wasmModulePromise) {
-    return wasmModulePromise;
+function initWasmSync() {
+  if (wasmInitialized) {
+    return;
   }
-  wasmModulePromise = new Promise(async (resolve, reject) => {
-    try {
-      // biome-ignore lint/correctness/noUndeclaredVariables: off
-      const go = new Go();
-      const wasmPath = path.resolve(__dirname, "../lib/main.wasm");
-      const wasmBytes = fs.readFileSync(wasmPath);
-      const { instance } = await WebAssembly.instantiate(wasmBytes, go.importObject);
-      go.run(instance);
-      resolve();
-    } catch (err) {
-      reject(err);
-    }
-  });
-  return wasmModulePromise;
+
+  try {
+    const go = new Go();
+    const wasmPath = path.resolve(__dirname, "../lib/main.wasm");
+    const wasmBytes = fs.readFileSync(wasmPath);
+
+    const module = new WebAssembly.Module(wasmBytes);
+    const instance = new WebAssembly.Instance(module, go.importObject);
+
+    go.run = function (instance) {
+      this._inst = instance;
+      this.mem = new DataView(this._inst.exports.mem.buffer);
+      this._values = [NaN, 0, null, true, false, globalThis, this];
+      this._goRefCounts = new Array(this._values.length).fill(Infinity);
+      this._ids = new Map([
+        [0, 1],
+        [null, 2],
+        [true, 3],
+        [false, 4],
+        [globalThis, 5],
+        [this, 6],
+      ]);
+      this._idPool = [];
+      this.exited = false;
+
+      let offset = 4096;
+      const strPtr = (str) => {
+        const ptr = offset;
+        const bytes = new TextEncoder().encode(str + "\0");
+        new Uint8Array(this.mem.buffer, offset, bytes.length).set(bytes);
+        offset += bytes.length;
+        if (offset % 8 !== 0) {
+          offset += 8 - (offset % 8);
+        }
+        return ptr;
+      };
+
+      const argc = this.argv.length;
+      const argvPtrs = [];
+      this.argv.forEach((arg) => {
+        argvPtrs.push(strPtr(arg));
+      });
+      argvPtrs.push(0);
+
+      const keys = Object.keys(this.env).sort();
+      keys.forEach((key) => {
+        argvPtrs.push(strPtr(`${key}=${this.env[key]}`));
+      });
+      argvPtrs.push(0);
+
+      const argv = offset;
+      argvPtrs.forEach((ptr) => {
+        this.mem.setUint32(offset, ptr, true);
+        this.mem.setUint32(offset + 4, 0, true);
+        offset += 8;
+      });
+
+      this._inst.exports.run(argc, argv);
+    };
+
+    go.run(instance);
+    goCryptoInstance = global.goCrypto;
+    wasmInitialized = true;
+  } catch (err) {
+    throw new Error(`Failed to initialize WASM: ${err.message}`);
+  }
 }
+
+initWasmSync();
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -38,19 +93,23 @@ function validatePrivKey(privKey) {
   }
 }
 
-exports.createKeyPair = async function (privKey) {
-  await loadWasm();
+exports.createKeyPair = function (privKey) {
+  if (!wasmInitialized) {
+    throw new Error("WASM not initialized");
+  }
   validatePrivKey(privKey);
-  const keys = global.goCrypto.createKeyPair(privKey);
+  const keys = goCryptoInstance.createKeyPair(privKey);
   return {
     pubKey: Buffer.from(keys.pubKey),
     privKey: Buffer.from(keys.privKey),
   };
 };
 
-exports.generateKeyPair = async function () {
-  await loadWasm();
-  const keys = global.goCrypto.generateKeyPair();
+exports.generateKeyPair = function () {
+  if (!wasmInitialized) {
+    throw new Error("WASM not initialized");
+  }
+  const keys = goCryptoInstance.generateKeyPair();
   const fullPrivKey = Buffer.from(keys.privKey);
   return {
     pubKey: Buffer.from(keys.pubKey),
@@ -58,24 +117,30 @@ exports.generateKeyPair = async function () {
   };
 };
 
-exports.calculateAgreement = async function (pubKey, privKey) {
-  await loadWasm();
+exports.calculateAgreement = function (pubKey, privKey) {
+  if (!wasmInitialized) {
+    throw new Error("WASM not initialized");
+  }
   validatePrivKey(privKey);
-  const shared = global.goCrypto.calculateAgreement(pubKey, privKey);
+  const shared = goCryptoInstance.calculateAgreement(pubKey, privKey);
   return Buffer.from(shared);
 };
 
-exports.calculateSignature = async function (privKey, message) {
-  await loadWasm();
+exports.calculateSignature = function (privKey, message) {
+  if (!wasmInitialized) {
+    throw new Error("WASM not initialized");
+  }
   validatePrivKey(privKey);
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = global.goCrypto.calculateSignature(privKey, message);
+  const signature = goCryptoInstance.calculateSignature(privKey, message);
   return Buffer.from(signature);
 };
 
-exports.verifySignature = async function (pubKey, msg, sig, isInit = false) {
-  await loadWasm();
-  return global.goCrypto.verifySignature(pubKey, msg, sig, isInit);
+exports.verifySignature = function (pubKey, msg, sig, isInit = false) {
+  if (!wasmInitialized) {
+    throw new Error("WASM not initialized");
+  }
+  return goCryptoInstance.verifySignature(pubKey, msg, sig, isInit);
 };
