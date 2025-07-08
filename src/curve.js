@@ -1,7 +1,30 @@
 "use strict";
 
-const curve25519 = require("curve25519-js");
-const nodeCrypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+require("../lib/wasm_exec");
+
+let wasmModulePromise = null;
+
+function loadWasm() {
+  if (wasmModulePromise) {
+    return wasmModulePromise;
+  }
+  wasmModulePromise = new Promise(async (resolve, reject) => {
+    try {
+      // biome-ignore lint/correctness/noUndeclaredVariables: off
+      const go = new Go();
+      const wasmPath = path.resolve(__dirname, "../lib/main.wasm");
+      const wasmBytes = fs.readFileSync(wasmPath);
+      const { instance } = await WebAssembly.instantiate(wasmBytes, go.importObject);
+      go.run(instance);
+      resolve();
+    } catch (err) {
+      reject(err);
+    }
+  });
+  return wasmModulePromise;
+}
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -11,81 +34,50 @@ function validatePrivKey(privKey) {
     throw new Error(`Invalid private key type: ${privKey?.constructor?.name}`);
   }
   if (privKey.byteLength != 32) {
-    throw new Error(`Incorrect private key length: ${privKey?.byteLength}`);
+    throw new Error(`Incorrect private key length: ${privKey.byteLength}`);
   }
 }
 
-function scrubPubKeyFormat(pubKey) {
-  if (!(pubKey instanceof Buffer)) {
-    throw new Error(`Invalid public key type: ${pubKey?.constructor?.name}`);
-  }
-  if (
-    pubKey === undefined ||
-    ((pubKey.byteLength != 33 || pubKey[0] != 5) && pubKey.byteLength != 32)
-  ) {
-    throw new Error("Invalid public key");
-  }
-  if (pubKey.byteLength == 33) {
-    return pubKey.subarray(1);
-  } else {
-    console.error(
-      "WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey",
-    );
-    return pubKey;
-  }
-}
-
-exports.createKeyPair = function (privKey) {
+exports.createKeyPair = async function (privKey) {
+  await loadWasm();
   validatePrivKey(privKey);
-  const keys = curve25519.generateKeyPair(privKey);
-
-  const pub = new Uint8Array(33);
-  pub.set(keys.public, 1);
-  pub[0] = 5;
-
+  const keys = await global.goCrypto.createKeyPair(privKey);
   return {
-    pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keys.private),
+    pubKey: Buffer.from(keys.pubKey),
+    privKey: Buffer.from(keys.privKey),
   };
 };
 
-exports.calculateAgreement = function (pubKey, privKey) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
+exports.generateKeyPair = async function () {
+  await loadWasm();
+  const keys = await global.goCrypto.generateKeyPair();
+  // In Go, the generated private key is 64 bytes (seed + public key).
+  // To match the original JS, we return only the first 32 bytes (the seed).
+  const fullPrivKey = Buffer.from(keys.privKey);
+  return {
+    pubKey: Buffer.from(keys.pubKey),
+    privKey: fullPrivKey.subarray(0, 32),
+  };
+};
+
+exports.calculateAgreement = async function (pubKey, privKey) {
+  await loadWasm();
   validatePrivKey(privKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
-    throw new Error("Invalid public key");
-  }
-  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
+  const shared = await global.goCrypto.calculateAgreement(pubKey, privKey);
   return Buffer.from(shared);
 };
 
-exports.calculateSignature = function (privKey, message) {
+exports.calculateSignature = async function (privKey, message) {
+  await loadWasm();
   validatePrivKey(privKey);
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = curve25519.sign(privKey, message);
+  const signature = await global.goCrypto.calculateSignature(privKey, message);
   return Buffer.from(signature);
 };
 
-exports.verifySignature = function (pubKey, msg, sig, isInit) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
-    throw new Error("Invalid public key");
-  }
-  if (!msg) {
-    throw new Error("Invalid message");
-  }
-  if (!sig || sig.byteLength != 64) {
-    throw new Error("Invalid signature");
-  }
-  if (isInit) {
-    return true;
-  }
-  return curve25519.verify(scrubbedPubKey, msg, sig);
-};
-
-exports.generateKeyPair = function () {
-  const privKey = nodeCrypto.randomBytes(32);
-  return exports.createKeyPair(privKey);
+exports.verifySignature = async function (pubKey, msg, sig, isInit = false) {
+  await loadWasm();
+  return await global.goCrypto.verifySignature(pubKey, msg, sig, isInit);
 };

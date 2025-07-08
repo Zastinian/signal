@@ -8,10 +8,12 @@
     "whispersystems",
     "crypto"
   ],
+  "scripts": {
+    "build": "cd ./lib && GOOS=js GOARCH=wasm go build -o main.wasm"
+  },
   "license": "GPL-3.0",
   "main": "index.js",
   "dependencies": {
-    "curve25519-js": "^0.0.4",
     "protobufjs": "6.8.8"
   },
   "engines": {
