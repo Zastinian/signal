@@ -11,7 +11,7 @@
   "license": "GPL-3.0",
   "main": "index.js",
   "dependencies": {
-    "@noble/ed25519": "^2.3.0",
+    "@noble/curves": "^1.9.2",
     "protobufjs": "6.8.8"
   },
   "gypfile": true,
