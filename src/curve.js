@@ -1,35 +1,7 @@
 "use strict";
-
-require("../lib/wasm_exec");
-const fs = require("fs");
-const path = require("path");
-
-let wasmInitialized = false;
-let go;
-
-function initWasm() {
-  if (wasmInitialized) {
-    return;
-  }
-
-  globalThis.require = require;
-  globalThis.fs = fs;
-  globalThis.path = path;
-  globalThis.TextEncoder = require("util").TextEncoder;
-  globalThis.TextDecoder = require("util").TextDecoder;
-  globalThis.crypto = require("crypto");
-
-  go = new Go();
-  go.argv = [];
-  go.env = Object.assign({ TMPDIR: require("os").tmpdir() }, process.env);
-
-  const wasmBuffer = fs.readFileSync(path.join(__dirname, "../lib/main.wasm"));
-  const wasmModule = new WebAssembly.Module(wasmBuffer);
-  const wasmInstance = new WebAssembly.Instance(wasmModule, go.importObject);
-
-  go.run(wasmInstance);
-  wasmInitialized = true;
-}
+const { ed25519 } = require("@noble/curves/ed25519");
+const { x25519 } = require("@noble/curves/ed25519");
+const nodeCrypto = require("crypto");
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -64,54 +36,46 @@ function scrubPubKeyFormat(pubKey) {
 }
 
 exports.createKeyPair = function (privKey) {
-  initWasm();
   validatePrivKey(privKey);
 
-  const privKeyArray = new Uint8Array(privKey);
-  const result = globalThis.createKeyPair(privKeyArray);
+  const publicKey = x25519.getPublicKey(privKey);
+
+  const pub = new Uint8Array(33);
+  pub.set(publicKey, 1);
+  pub[0] = 5;
 
   return {
-    pubKey: Buffer.from(result.pubKey),
-    privKey: Buffer.from(result.privKey),
+    pubKey: Buffer.from(pub),
+    privKey: Buffer.from(privKey),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
-  initWasm();
-  pubKey = scrubPubKeyFormat(pubKey);
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
 
-  if (!pubKey || pubKey.byteLength != 32) {
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
 
-  const pubKeyArray = new Uint8Array(pubKey);
-  const privKeyArray = new Uint8Array(privKey);
-  const result = globalThis.calculateAgreement(pubKeyArray, privKeyArray);
-
-  return Buffer.from(result);
+  const shared = x25519.getSharedSecret(privKey, scrubbedPubKey);
+  return Buffer.from(shared);
 };
 
 exports.calculateSignature = function (privKey, message) {
-  initWasm();
   validatePrivKey(privKey);
-
   if (!message) {
     throw new Error("Invalid message");
   }
 
-  const privKeyArray = new Uint8Array(privKey);
-  const messageArray = new Uint8Array(message);
-  const result = globalThis.calculateSignature(privKeyArray, messageArray);
-
-  return Buffer.from(result);
+  const signature = ed25519.sign(message, privKey);
+  return Buffer.from(signature);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
-  initWasm();
-  pubKey = scrubPubKeyFormat(pubKey);
+  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
 
-  if (!pubKey || pubKey.byteLength != 32) {
+  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
   if (!msg) {
@@ -120,20 +84,14 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
   if (!sig || sig.byteLength != 64) {
     throw new Error("Invalid signature");
   }
+  if (isInit) {
+    return true;
+  }
 
-  const pubKeyArray = new Uint8Array(pubKey);
-  const msgArray = new Uint8Array(msg);
-  const sigArray = new Uint8Array(sig);
-
-  return globalThis.verifySignature(pubKeyArray, msgArray, sigArray, isInit);
+  return ed25519.verify(sig, msg, scrubbedPubKey);
 };
 
 exports.generateKeyPair = function () {
-  initWasm();
-  const result = globalThis.generateKeyPair();
-
-  return {
-    pubKey: Buffer.from(result.pubKey),
-    privKey: Buffer.from(result.privKey),
-  };
+  const privKey = nodeCrypto.randomBytes(32);
+  return exports.createKeyPair(privKey);
 };
