@@ -1,5 +1,6 @@
 "use strict";
-const nacl = require("tweetnacl");
+
+const curve25519 = require("curve25519-js");
 const nodeCrypto = require("crypto");
 
 function validatePrivKey(privKey) {
@@ -36,28 +37,25 @@ function scrubPubKeyFormat(pubKey) {
 
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
-
-  const publicKey = nacl.scalarMult.base(privKey);
+  const keys = curve25519.generateKeyPair(privKey);
 
   const pub = new Uint8Array(33);
-  pub.set(publicKey, 1);
+  pub.set(keys.public, 1);
   pub[0] = 5;
 
   return {
     pubKey: Buffer.from(pub),
-    privKey: Buffer.from(privKey),
+    privKey: Buffer.from(keys.private),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
   let scrubbedPubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
-
   if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
-
-  const shared = nacl.scalarMult(privKey, scrubbedPubKey);
+  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
   return Buffer.from(shared);
 };
 
@@ -66,16 +64,12 @@ exports.calculateSignature = function (privKey, message) {
   if (!message) {
     throw new Error("Invalid message");
   }
-
-  const keyPair = nacl.sign.keyPair.fromSeed(privKey);
-  const signature = nacl.sign.detached(message, keyPair.secretKey);
-
+  const signature = curve25519.sign(privKey, message);
   return Buffer.from(signature);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
   let scrubbedPubKey = scrubPubKeyFormat(pubKey);
-
   if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
@@ -88,12 +82,7 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
   if (isInit) {
     return true;
   }
-
-  try {
-    return nacl.sign.detached.verify(msg, sig, scrubbedPubKey);
-  } catch (e) {
-    return false;
-  }
+  return curve25519.verify(scrubbedPubKey, msg, sig);
 };
 
 exports.generateKeyPair = function () {
