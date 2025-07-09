@@ -1,7 +1,5 @@
 "use strict";
-const { generateKeyPair: x25519GenerateKeyPair, sharedKey } = require("@stablelib/x25519");
-const { generateKeyPair: ed25519GenerateKeyPair, sign, verify } = require("@stablelib/ed25519");
-const { randomBytes } = require("@stablelib/random");
+const nacl = require("tweetnacl");
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -38,15 +36,15 @@ function scrubPubKeyFormat(pubKey) {
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
 
-  const keyPair = x25519GenerateKeyPair(new Uint8Array(privKey));
+  const boxKeyPair = nacl.box.keyPair.fromSecretKey(new Uint8Array(privKey));
 
   const pub = new Uint8Array(33);
-  pub.set(keyPair.publicKey, 1);
+  pub.set(boxKeyPair.publicKey, 1);
   pub[0] = 5;
 
   return {
     pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keyPair.secretKey),
+    privKey: Buffer.from(boxKeyPair.secretKey),
   };
 };
 
@@ -58,7 +56,7 @@ exports.calculateAgreement = function (pubKey, privKey) {
     throw new Error("Invalid public key");
   }
 
-  const shared = sharedKey(new Uint8Array(privKey), new Uint8Array(scrubbedPubKey));
+  const shared = nacl.box.before(new Uint8Array(scrubbedPubKey), new Uint8Array(privKey));
   return Buffer.from(shared);
 };
 
@@ -69,8 +67,8 @@ exports.calculateSignature = function (privKey, message) {
     throw new Error("Invalid message");
   }
 
-  const keyPair = ed25519GenerateKeyPair(new Uint8Array(privKey));
-  const signature = sign(keyPair.secretKey, new Uint8Array(message));
+  const signKeyPair = nacl.sign.keyPair.fromSeed(new Uint8Array(privKey));
+  const signature = nacl.sign.detached(new Uint8Array(message), signKeyPair.secretKey);
 
   return Buffer.from(signature);
 };
@@ -94,10 +92,14 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
     return true;
   }
 
-  return verify(new Uint8Array(scrubbedPubKey), new Uint8Array(msg), new Uint8Array(sig));
+  return nacl.sign.detached.verify(
+    new Uint8Array(msg),
+    new Uint8Array(sig),
+    new Uint8Array(scrubbedPubKey),
+  );
 };
 
 exports.generateKeyPair = function () {
-  const privKey = randomBytes(32); // Usar randomBytes de stablelib es más rápido
+  const privKey = nacl.randomBytes(32);
   return exports.createKeyPair(Buffer.from(privKey));
 };
