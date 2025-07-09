@@ -1,7 +1,7 @@
 "use strict";
-
-const curve25519 = require("curve25519-js");
-const nodeCrypto = require("crypto");
+const { generateKeyPair: x25519GenerateKeyPair, sharedKey } = require("@stablelib/x25519");
+const { generateKeyPair: ed25519GenerateKeyPair, sign, verify } = require("@stablelib/ed25519");
+const { randomBytes } = require("@stablelib/random");
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -37,55 +37,67 @@ function scrubPubKeyFormat(pubKey) {
 
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
-  const keys = curve25519.generateKeyPair(privKey);
+
+  const keyPair = x25519GenerateKeyPair(new Uint8Array(privKey));
 
   const pub = new Uint8Array(33);
-  pub.set(keys.public, 1);
+  pub.set(keyPair.publicKey, 1);
   pub[0] = 5;
 
   return {
     pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keys.private),
+    privKey: Buffer.from(keyPair.secretKey),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
   let scrubbedPubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
+
   if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
-  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
+
+  const shared = sharedKey(new Uint8Array(privKey), new Uint8Array(scrubbedPubKey));
   return Buffer.from(shared);
 };
 
 exports.calculateSignature = function (privKey, message) {
   validatePrivKey(privKey);
+
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = curve25519.sign(privKey, message);
+
+  const keyPair = ed25519GenerateKeyPair(new Uint8Array(privKey));
+  const signature = sign(keyPair.secretKey, new Uint8Array(message));
+
   return Buffer.from(signature);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
   let scrubbedPubKey = scrubPubKeyFormat(pubKey);
+
   if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
+
   if (!msg) {
     throw new Error("Invalid message");
   }
+
   if (!sig || sig.byteLength != 64) {
     throw new Error("Invalid signature");
   }
+
   if (isInit) {
     return true;
   }
-  return curve25519.verify(scrubbedPubKey, msg, sig);
+
+  return verify(new Uint8Array(scrubbedPubKey), new Uint8Array(msg), new Uint8Array(sig));
 };
 
 exports.generateKeyPair = function () {
-  const privKey = nodeCrypto.randomBytes(32);
-  return exports.createKeyPair(privKey);
+  const privKey = randomBytes(32); // Usar randomBytes de stablelib es más rápido
+  return exports.createKeyPair(Buffer.from(privKey));
 };
