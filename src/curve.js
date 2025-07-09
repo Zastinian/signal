@@ -1,6 +1,5 @@
 "use strict";
-const { ed25519 } = require("@noble/curves/ed25519");
-const { x25519 } = require("@noble/curves/ed25519");
+const nacl = require("tweetnacl");
 const nodeCrypto = require("crypto");
 
 function validatePrivKey(privKey) {
@@ -38,7 +37,7 @@ function scrubPubKeyFormat(pubKey) {
 exports.createKeyPair = function (privKey) {
   validatePrivKey(privKey);
 
-  const publicKey = x25519.getPublicKey(privKey);
+  const publicKey = nacl.scalarMult.base(privKey);
 
   const pub = new Uint8Array(33);
   pub.set(publicKey, 1);
@@ -58,7 +57,7 @@ exports.calculateAgreement = function (pubKey, privKey) {
     throw new Error("Invalid public key");
   }
 
-  const shared = x25519.getSharedSecret(privKey, scrubbedPubKey);
+  const shared = nacl.scalarMult(privKey, scrubbedPubKey);
   return Buffer.from(shared);
 };
 
@@ -68,7 +67,9 @@ exports.calculateSignature = function (privKey, message) {
     throw new Error("Invalid message");
   }
 
-  const signature = ed25519.sign(message, privKey);
+  const keyPair = nacl.sign.keyPair.fromSeed(privKey);
+  const signature = nacl.sign.detached(message, keyPair.secretKey);
+
   return Buffer.from(signature);
 };
 
@@ -88,7 +89,11 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
     return true;
   }
 
-  return ed25519.verify(sig, msg, scrubbedPubKey);
+  try {
+    return nacl.sign.detached.verify(msg, sig, scrubbedPubKey);
+  } catch (e) {
+    return false;
+  }
 };
 
 exports.generateKeyPair = function () {

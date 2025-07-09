@@ -11,8 +11,8 @@
   "license": "GPL-3.0",
   "main": "index.js",
   "dependencies": {
-    "@noble/curves": "^1.9.2",
-    "protobufjs": "6.8.8"
+    "protobufjs": "6.8.8",
+    "tweetnacl": "^1.0.3"
   },
   "engines": {
     "node": ">=14.0.0"
