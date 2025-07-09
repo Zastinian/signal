@@ -12,8 +12,7 @@
   "main": "index.js",
   "dependencies": {
     "curve25519-js": "^0.0.4",
-    "protobufjs": "6.8.8",
-    "sodium-native": "^5.0.6"
+    "protobufjs": "6.8.8"
   },
   "engines": {
     "node": ">=14.0.0"
