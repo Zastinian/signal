@@ -180,13 +180,13 @@ func generateKeyPair() (map[string]interface{}, error) {
 
 func jsCreateKeyPair(this js.Value, args []js.Value) interface{} {
 	if len(args) != 1 {
-		return js.ValueOf(map[string]interface{}{"error": "invalid number of arguments"})
+		panic("Invalid number of arguments")
 	}
 	privKey := make([]byte, args[0].Get("length").Int())
 	js.CopyBytesToGo(privKey, args[0])
 	result, err := createKeyPair(privKey)
 	if err != nil {
-		return js.ValueOf(map[string]interface{}{"error": err.Error()})
+		panic(err.Error())
 	}
 	pubKeyJS := js.Global().Get("Uint8Array").New(len(result["pubKey"].([]byte)))
 	js.CopyBytesToJS(pubKeyJS, result["pubKey"].([]byte))
@@ -197,7 +197,7 @@ func jsCreateKeyPair(this js.Value, args []js.Value) interface{} {
 
 func jsCalculateAgreement(this js.Value, args []js.Value) interface{} {
 	if len(args) != 2 {
-		return js.ValueOf(map[string]interface{}{"error": "invalid number of arguments"})
+		panic("Invalid number of arguments")
 	}
 	pubKey := make([]byte, args[0].Get("length").Int())
 	js.CopyBytesToGo(pubKey, args[0])
@@ -205,7 +205,7 @@ func jsCalculateAgreement(this js.Value, args []js.Value) interface{} {
 	js.CopyBytesToGo(privKey, args[1])
 	result, err := calculateAgreement(pubKey, privKey)
 	if err != nil {
-		return js.ValueOf(map[string]interface{}{"error": err.Error()})
+		panic(err.Error())
 	}
 	resultJS := js.Global().Get("Uint8Array").New(len(result))
 	js.CopyBytesToJS(resultJS, result)
@@ -214,7 +214,7 @@ func jsCalculateAgreement(this js.Value, args []js.Value) interface{} {
 
 func jsCalculateSignature(this js.Value, args []js.Value) interface{} {
 	if len(args) != 2 {
-		return js.ValueOf(map[string]interface{}{"error": "invalid number of arguments"})
+		panic("Invalid number of arguments")
 	}
 	privKey := make([]byte, args[0].Get("length").Int())
 	js.CopyBytesToGo(privKey, args[0])
@@ -222,7 +222,7 @@ func jsCalculateSignature(this js.Value, args []js.Value) interface{} {
 	js.CopyBytesToGo(message, args[1])
 	result, err := calculateSignature(privKey, message)
 	if err != nil {
-		return js.ValueOf(map[string]interface{}{"error": err.Error()})
+		panic(err.Error())
 	}
 	resultJS := js.Global().Get("Uint8Array").New(len(result))
 	js.CopyBytesToJS(resultJS, result)
@@ -231,7 +231,7 @@ func jsCalculateSignature(this js.Value, args []js.Value) interface{} {
 
 func jsVerifySignature(this js.Value, args []js.Value) interface{} {
 	if len(args) != 4 {
-		return js.ValueOf(map[string]interface{}{"error": "invalid number of arguments"})
+		panic("Invalid number of arguments")
 	}
 	pubKey := make([]byte, args[0].Get("length").Int())
 	js.CopyBytesToGo(pubKey, args[0])
@@ -242,7 +242,7 @@ func jsVerifySignature(this js.Value, args []js.Value) interface{} {
 	isInit := args[3].Bool()
 	result, err := verifySignature(pubKey, message, signature, isInit)
 	if err != nil {
-		return js.ValueOf(map[string]interface{}{"error": err.Error()})
+		panic(err.Error())
 	}
 	return js.ValueOf(result)
 }
@@ -250,7 +250,7 @@ func jsVerifySignature(this js.Value, args []js.Value) interface{} {
 func jsGenerateKeyPair(this js.Value, args []js.Value) interface{} {
 	result, err := generateKeyPair()
 	if err != nil {
-		return js.ValueOf(map[string]interface{}{"error": err.Error()})
+		panic(err.Error())
 	}
 	pubKeyJS := js.Global().Get("Uint8Array").New(len(result["pubKey"].([]byte)))
 	js.CopyBytesToJS(pubKeyJS, result["pubKey"].([]byte))
@@ -260,13 +260,10 @@ func jsGenerateKeyPair(this js.Value, args []js.Value) interface{} {
 }
 
 func main() {
-	c := make(chan struct{})
-	js.Global().Set("goCrypto", js.ValueOf(map[string]interface{}{
-		"createKeyPair":      js.FuncOf(jsCreateKeyPair),
-		"calculateAgreement": js.FuncOf(jsCalculateAgreement),
-		"calculateSignature": js.FuncOf(jsCalculateSignature),
-		"verifySignature":    js.FuncOf(jsVerifySignature),
-		"generateKeyPair":    js.FuncOf(jsGenerateKeyPair),
-	}))
-	<-c
+	js.Global().Set("createKeyPair", js.FuncOf(jsCreateKeyPair))
+	js.Global().Set("calculateAgreement", js.FuncOf(jsCalculateAgreement))
+	js.Global().Set("calculateSignature", js.FuncOf(jsCalculateSignature))
+	js.Global().Set("verifySignature", js.FuncOf(jsVerifySignature))
+	js.Global().Set("generateKeyPair", js.FuncOf(jsGenerateKeyPair))
+	select {}
 }

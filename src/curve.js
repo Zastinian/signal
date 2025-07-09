@@ -1,7 +1,35 @@
 "use strict";
 
-const curve25519 = require("curve25519-js");
-const nodeCrypto = require("crypto");
+require("../lib/wasm_exec");
+const fs = require("fs");
+const path = require("path");
+
+let wasmInitialized = false;
+let go;
+
+function initWasm() {
+  if (wasmInitialized) {
+    return;
+  }
+
+  globalThis.require = require;
+  globalThis.fs = fs;
+  globalThis.path = path;
+  globalThis.TextEncoder = require("util").TextEncoder;
+  globalThis.TextDecoder = require("util").TextDecoder;
+  globalThis.crypto = require("crypto");
+
+  go = new Go();
+  go.argv = [];
+  go.env = Object.assign({ TMPDIR: require("os").tmpdir() }, process.env);
+
+  const wasmBuffer = fs.readFileSync(path.join(__dirname, "../lib/main.wasm"));
+  const wasmModule = new WebAssembly.Module(wasmBuffer);
+  const wasmInstance = new WebAssembly.Instance(wasmModule, go.importObject);
+
+  go.run(wasmInstance);
+  wasmInitialized = true;
+}
 
 function validatePrivKey(privKey) {
   if (privKey === undefined) {
@@ -36,41 +64,54 @@ function scrubPubKeyFormat(pubKey) {
 }
 
 exports.createKeyPair = function (privKey) {
+  initWasm();
   validatePrivKey(privKey);
-  const keys = curve25519.generateKeyPair(privKey);
 
-  const pub = new Uint8Array(33);
-  pub.set(keys.public, 1);
-  pub[0] = 5;
+  const privKeyArray = new Uint8Array(privKey);
+  const result = globalThis.createKeyPair(privKeyArray);
 
   return {
-    pubKey: Buffer.from(pub),
-    privKey: Buffer.from(keys.private),
+    pubKey: Buffer.from(result.pubKey),
+    privKey: Buffer.from(result.privKey),
   };
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
+  initWasm();
+  pubKey = scrubPubKeyFormat(pubKey);
   validatePrivKey(privKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
+
+  if (!pubKey || pubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
-  const shared = curve25519.sharedKey(privKey, scrubbedPubKey);
-  return Buffer.from(shared);
+
+  const pubKeyArray = new Uint8Array(pubKey);
+  const privKeyArray = new Uint8Array(privKey);
+  const result = globalThis.calculateAgreement(pubKeyArray, privKeyArray);
+
+  return Buffer.from(result);
 };
 
 exports.calculateSignature = function (privKey, message) {
+  initWasm();
   validatePrivKey(privKey);
+
   if (!message) {
     throw new Error("Invalid message");
   }
-  const signature = curve25519.sign(privKey, message);
-  return Buffer.from(signature);
+
+  const privKeyArray = new Uint8Array(privKey);
+  const messageArray = new Uint8Array(message);
+  const result = globalThis.calculateSignature(privKeyArray, messageArray);
+
+  return Buffer.from(result);
 };
 
 exports.verifySignature = function (pubKey, msg, sig, isInit) {
-  let scrubbedPubKey = scrubPubKeyFormat(pubKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength != 32) {
+  initWasm();
+  pubKey = scrubPubKeyFormat(pubKey);
+
+  if (!pubKey || pubKey.byteLength != 32) {
     throw new Error("Invalid public key");
   }
   if (!msg) {
@@ -79,13 +120,20 @@ exports.verifySignature = function (pubKey, msg, sig, isInit) {
   if (!sig || sig.byteLength != 64) {
     throw new Error("Invalid signature");
   }
-  if (isInit) {
-    return true;
-  }
-  return curve25519.verify(scrubbedPubKey, msg, sig);
+
+  const pubKeyArray = new Uint8Array(pubKey);
+  const msgArray = new Uint8Array(msg);
+  const sigArray = new Uint8Array(sig);
+
+  return globalThis.verifySignature(pubKeyArray, msgArray, sigArray, isInit);
 };
 
 exports.generateKeyPair = function () {
-  const privKey = nodeCrypto.randomBytes(32);
-  return exports.createKeyPair(privKey);
+  initWasm();
+  const result = globalThis.generateKeyPair();
+
+  return {
+    pubKey: Buffer.from(result.pubKey),
+    privKey: Buffer.from(result.privKey),
+  };
 };
