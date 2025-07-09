@@ -1,52 +1,46 @@
 "use strict";
 
-const { x25519 } = require("@noble/curves/ed25519");
-const nodeCrypto = require("crypto");
+const { Worker } = require("worker_threads");
+const path = require("path");
+const crypto = require("crypto");
 
-function validatePrivKey(privKey) {
-  if (privKey === undefined) throw new Error("Undefined private key");
-  if (!(privKey instanceof Buffer)) throw new Error(`Invalid private key type: ${privKey?.constructor?.name}`);
-  if (privKey.byteLength !== 32) throw new Error(`Incorrect private key length: ${privKey?.byteLength}`);
-}
+const workerPath = path.resolve(__dirname, "crypto-worker.js");
 
-function scrubPubKeyFormat(pubKey) {
-  if (!(pubKey instanceof Buffer)) throw new Error(`Invalid public key type: ${pubKey?.constructor?.name}`);
-  if (pubKey === undefined || ((pubKey.byteLength !== 33 || pubKey[0] !== 5) && pubKey.byteLength !== 32))
-    throw new Error("Invalid public key");
-  if (pubKey.byteLength === 33) return pubKey.subarray(1);
-  else {
-    console.error("WARNING: Expected pubkey of length 33, please report the ST and client that generated the pubkey");
-    return pubKey;
-  }
+function runInWorker(task, args) {
+  return new Promise((resolve, reject) => {
+    const worker = new Worker(workerPath, {
+      workerData: { task, args },
+    });
+    worker.on("message", resolve);
+    worker.on("error", reject);
+    worker.on("exit", (code) => {
+      if (code !== 0) {
+        reject(new Error(`Worker stopped with exit code ${code}`));
+      }
+    });
+  });
 }
 
 exports.createKeyPair = function (privKey) {
-  validatePrivKey(privKey);
-  const pub = new Uint8Array(33);
-  pub.set(x25519.getPublicKey(privKey), 1);
-  pub[0] = 5;
-  return {
-    pubKey: Buffer.from(pub),
-    privKey: Buffer.from(privKey),
-  };
+  return runInWorker("createKeyPair", { privKey });
 };
 
 exports.calculateAgreement = function (pubKey, privKey) {
-  const scrubbedPubKey = scrubPubKeyFormat(pubKey);
-  validatePrivKey(privKey);
-  if (!scrubbedPubKey || scrubbedPubKey.byteLength !== 32) throw new Error("Invalid public key");
-  return Buffer.from(x25519.sharedKey(privKey, scrubbedPubKey));
+  return runInWorker("calculateAgreement", { pubKey, privKey });
 };
 
-exports.calculateSignature = function () {
-  throw new Error("Signature not supported with pure x25519");
+exports.calculateSignature = function (privKey, message) {
+  return runInWorker("calculateSignature", { privKey, message });
 };
 
-exports.verifySignature = function () {
-  throw new Error("Signature verification not supported with pure x25519");
+exports.verifySignature = function (pubKey, msg, sig, isInit) {
+  if (isInit) {
+    return Promise.resolve(true);
+  }
+  return runInWorker("verifySignature", { pubKey, msg, sig });
 };
 
 exports.generateKeyPair = function () {
-  const privKey = nodeCrypto.randomBytes(32);
+  const privKey = crypto.randomBytes(32);
   return exports.createKeyPair(privKey);
 };
